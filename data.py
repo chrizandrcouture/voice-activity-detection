@@ -9,6 +9,7 @@ import soundfile as sf
 from pydub import AudioSegment
 import re
 import glob
+import pdb
 
 
 SAMPLE_RATE = 16000
@@ -68,10 +69,9 @@ class FileManager:
         2. Converts all files to WAV with the desired properties.
         3. Stores the converted files in a separate folder.
         '''
-
-        if not OBJ_PREPARE_AUDIO:
-            print(f'Skipping check for {self.name}.')
-            return
+        # if not OBJ_PREPARE_AUDIO:
+        #     print(f'Skipping check for {self.name}.')
+        #     return
 
         print('Found {0} tracks to check.'.format(self.get_track_count()))
         progress = 1
@@ -84,7 +84,7 @@ class FileManager:
 
         # Convert files to desired format and save raw content.
         for i, file in enumerate(self.data['files']):
-
+            print(file)
             print('Processing {0} of {1}'.format(
                 progress, self.get_track_count()), end='\r', flush=True)
             progress += 1
@@ -94,7 +94,7 @@ class FileManager:
                 continue
 
             # Convert file.
-            track = (AudioSegment.from_file(file)
+            track = (AudioSegment.from_file(file.decode("utf-8"))
                      .set_frame_rate(SAMPLE_RATE)
                      .set_sample_width(SAMPLE_WIDTH)
                      .set_channels(SAMPLE_CHANNELS))
@@ -242,127 +242,3 @@ def add_noise(speech_frames, noise_frames, align_frames, noise_level_db):
     delta = python_speech_features.delta(mfcc, 2)
 
     return frames, mfcc, delta
-
-if __name__ == "__main__":
-    print('Loading files...')
-    speech_dataset = FileManager('speech', 'LibriSpeech')
-
-    noise_dataset = FileManager('noise', 'QUT-NOISE')
-
-    speech_dataset.prepare_files()
-    noise_dataset.prepare_files(normalize=True)
-
-    print('Collecting frames...')
-
-    speech_dataset.collect_frames()
-    noise_dataset.collect_frames()
-
-    print('Labelling frames...')
-    speech_dataset.label_frames()
-    data = h5py_cache.File(DATA_FOLDER + '/data.hdf5', 'a',
-                           chunk_cache_mem_size=1024**3)
-    noise_levels_db = {'None': None, '-15': -15, '-3': -3}
-
-    mfcc_window_frame_size = 4
-
-    speech_data = speech_dataset.data
-    noise_data = noise_dataset.data
-
-    np.random.seed(1337)
-
-    if 'labels' not in data:
-
-        print('Shuffling speech data and randomly adding 50% silence.')
-
-        pos = 0
-        l = len(speech_dataset.data['frames'])
-        slices = []
-
-        # Split speech data randomly within the given slice length.
-        while pos + SLICE_MIN < l:
-            slice_indexing = (
-                pos, pos + np.random.randint(SLICE_MIN, SLICE_MAX + 1))
-            slices.append(slice_indexing)
-            pos = slice_indexing[1]
-
-        # Add remainder to last slice.
-        slices[-1] = (slices[-1][0], l)
-
-        pos = 0
-
-        # Add random silence (50%) to the track within the given slice length.
-        while pos + SLICE_MIN < l:
-            length = np.random.randint(SLICE_MIN, SLICE_MAX + 1)
-            slice_indexing = (length, length)
-            slices.append(slice_indexing)
-            pos += length
-
-        # Get total frame count.
-        total = l + pos + mfcc_window_frame_size
-
-        # Shuffle the content randomly.
-        np.random.shuffle(slices)
-
-        # Create data set for input.
-        for key in noise_levels_db:
-            data.create_dataset(
-                'frames-' + key, (total, FRAME_SIZE), dtype=np.dtype(np.int16))
-            data.create_dataset('mfcc-' + key, (total, 12),
-                                dtype=np.dtype(np.float32))
-            data.create_dataset('delta-' + key, (total, 12),
-                                dtype=np.dtype(np.float32))
-
-        # Create data set for labels.
-        dt = np.dtype(np.int8)
-        data.create_dataset('labels', (total,), dtype=dt)
-
-        pos = 0
-
-        # Construct speech data.
-        for s in slices:
-
-            # Silence?
-            if s[0] == s[1]:
-                frames = np.zeros((s[0], FRAME_SIZE))
-                labels = np.zeros(s[0])
-            # Otherwise use speech data.
-            else:
-                frames = speech_data['frames'][s[0]: s[1]]
-                labels = speech_data['labels'][s[0]: s[1]]
-
-            # Pick random noise to add.
-            i = np.random.randint(0, len(noise_data['frames']) - len(labels))
-            noise = noise_data['frames'][i: i + len(labels)]
-
-            # Setup noise levels.
-            for key in noise_levels_db:
-
-                # Get previous frames to align MFCC window with new data.
-                if pos == 0:
-                    align_frames = np.zeros(
-                        (mfcc_window_frame_size - 1, FRAME_SIZE))
-                else:
-                    align_frames = data['frames-' + key][pos -
-                                                         mfcc_window_frame_size + 1: pos]
-
-                # Add noise and get frames, MFCC and delta of MFCC.
-                frames, mfcc, delta = add_noise(np.int16(frames), np.int16(noise),
-                                                np.int16(align_frames), noise_levels_db[key])
-
-                data['frames-' + key][pos: pos + len(labels)] = frames
-                data['mfcc-' + key][pos: pos + len(labels)] = mfcc
-                data['delta-' + key][pos: pos + len(labels)] = delta
-
-            # Add labels.
-            data['labels'][pos: pos + len(labels)] = labels
-
-            pos += len(labels)
-            print('Generating data ({0:.2f} %)'.format(
-                (pos * 100) / total), end='\r', flush=True)
-
-        data.flush()
-
-        print('\nDone!')
-
-    else:
-        print('Speech data already generated. Skipping.')

@@ -2,6 +2,13 @@ import python_speech_features
 import array
 import h5py_cache
 
+
+speech_dataset = FileManager('speech', 'data')
+speech_dataset.prepare_files()
+speech_dataset.collect_frames()
+speech_dataset.label_frames()
+pdb.set_trace()
+
 data = h5py_cache.File(DATA_FOLDER + '/data.hdf5', 'a', chunk_cache_mem_size=1024**3)
 noise_levels_db = { 'None': None, '-15': -15, '-3': -3 }
 
@@ -41,6 +48,10 @@ def add_noise(speech_frames, noise_frames, align_frames, noise_level_db):
     delta = python_speech_features.delta(mfcc, 2)
 
     return frames, mfcc, delta
+
+
+def get_features(speech_dataset):
+    speech_data = speech_dataset.data
 
 if 'labels' not in data:
 
